@@ -15,9 +15,10 @@ env = os.environ.copy()
 pythonpath = env.get("PYTHONPATH", "")
 env["PYTHONPATH"] = f"{kronos_official}:{kronos_service}:{pythonpath}"
 
-# Kill any existing uvicorn or cloudflared
+# Kill any existing uvicorn, ngrok or cloudflared
 subprocess.run("pkill -f uvicorn", shell=True)
 subprocess.run("pkill -f cloudflared", shell=True)
+subprocess.run("pkill -f ngrok", shell=True)
 time.sleep(1)
 
 # Start uvicorn server in background
@@ -36,7 +37,7 @@ ready = False
 for i in range(15):
     time.sleep(1)
     try:
-        r = requests.get("http://localhost:8000/health", timeout=2)
+        r = requests.get("http://localhost:8000/poke", timeout=2)
         if r.status_code == 200:
             print("Local FastAPI server is HEALTHY:", r.json())
             ready = True
@@ -49,40 +50,55 @@ if not ready:
     with open("/content/uvicorn.log", "r") as f:
         print(f.read()[-500:])
 
-# Start Cloudflare tunnel
-print("Starting Cloudflare Tunnel...")
-cf_log = open("/content/cloudflared.log", "w")
-cf_proc = subprocess.Popen(
-    ["cloudflared", "tunnel", "--url", "http://localhost:8000"],
-    stdout=cf_log,
-    stderr=cf_log
-)
-print("Cloudflared process started (PID:", cf_proc.pid, ")")
+# Ngrok Static Domain Configuration
+NGROK_AUTH_TOKEN = "3M59t38Z8aG23qQfLsCx5hm0PKK_2UZ26SHAJhwVyniPYpV6u"
+NGROK_DOMAIN = "moisten-vacation-wizard.ngrok-free.dev"
 
-# Extract public URL from cloudflared logs
 public_url = None
-for _ in range(20):
-    time.sleep(1)
-    if os.path.exists("/content/cloudflared.log"):
-        with open("/content/cloudflared.log", "r") as f:
-            content = f.read()
-            match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
-            if match:
-                public_url = match.group(0)
-                break
+
+print("Starting Ngrok Static Domain Tunnel...")
+try:
+    from pyngrok import ngrok
+    ngrok.kill()
+    if NGROK_AUTH_TOKEN:
+        ngrok.set_auth_token(NGROK_AUTH_TOKEN)
+    try:
+        tunnel = ngrok.connect(8000, domain=NGROK_DOMAIN)
+    except Exception as exc:
+        print(f"Direct domain bind notice ({exc}), trying with url param...")
+        try:
+            tunnel = ngrok.connect(8000, url=f"https://{NGROK_DOMAIN}")
+        except Exception:
+            tunnel = ngrok.connect(8000)
+    public_url = tunnel.public_url
+except Exception as e:
+    print(f"pyngrok failed: {e}. Trying cloudflared fallback...")
+    cf_log = open("/content/cloudflared.log", "w")
+    cf_proc = subprocess.Popen(
+        ["cloudflared", "tunnel", "--url", "http://localhost:8000"],
+        stdout=cf_log,
+        stderr=cf_log
+    )
+    for _ in range(20):
+        time.sleep(1)
+        if os.path.exists("/content/cloudflared.log"):
+            with open("/content/cloudflared.log", "r") as f:
+                content = f.read()
+                match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
+                if match:
+                    public_url = match.group(0)
+                    break
 
 if public_url:
-    print("\n" + "="*60)
-    print("🚀 KRONOS INFERENCE SERVER IS LIVE ON CLOUD GPU!")
-    print(f"Public URL: {public_url}")
-    print("="*60)
-    print(f"\nUpdate your Laravel .env:")
+    print("\n" + "="*65)
+    print("🚀 KRONOS INFERENCE SERVER IS LIVE ON CLOUD GPU (STATIC DOMAIN)!")
+    print(f"Public Static URL : {public_url}")
+    print(f"Keep-Alive Poke URL: {public_url}/poke")
+    print("="*65)
+    print("\nPre-configured in your Laravel .env:")
     print(f"KRONOS_API_URL={public_url}")
-    print("="*60 + "\n")
+    print("="*65 + "\n")
     with open("/content/kronos_public_url.txt", "w") as f:
         f.write(public_url)
 else:
-    print("Could not extract tunnel URL from cloudflared logs:")
-    if os.path.exists("/content/cloudflared.log"):
-        with open("/content/cloudflared.log", "r") as f:
-            print(f.read())
+    print("Could not obtain a public tunnel URL. Check logs above.")

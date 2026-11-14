@@ -27,10 +27,15 @@ try:
         BatchPredictionRequest,
         BatchPredictionResponse,
         TradingViewPayload,
+        BacktestRequest,
+        BacktestResult,
+        BatchBacktestRequest,
+        BatchBacktestResponse,
     )
     from kronos.predictor import (
         init_kronos_model,
         execute_prediction,
+        execute_backtest,
         _IS_REAL_MODEL_LOADED,
     )
 except ImportError:
@@ -48,10 +53,15 @@ except ImportError:
         BatchPredictionRequest,
         BatchPredictionResponse,
         TradingViewPayload,
+        BacktestRequest,
+        BacktestResult,
+        BatchBacktestRequest,
+        BatchBacktestResponse,
     )
     from predictor import (
         init_kronos_model,
         execute_prediction,
+        execute_backtest,
         _IS_REAL_MODEL_LOADED,
     )
 
@@ -70,6 +80,9 @@ app.add_middleware(
 )
 
 
+SERVER_START_TIME = time.time()
+_POKE_COUNT = 0
+
 @app.on_event("startup")
 def on_startup():
     init_kronos_model()
@@ -84,6 +97,25 @@ def index():
         "model": MODEL_NAME,
         "device": DEVICE,
         "is_model_loaded": _IS_REAL_MODEL_LOADED,
+    }
+
+
+@app.get("/poke")
+@app.get("/ping")
+def poke():
+    """
+    Ultra-lightweight keep-alive heartbeat endpoint.
+    Zero GPU load, zero database query, returns sub-millisecond response
+    to keep Colab runtime & ngrok tunnel alive and active without load.
+    """
+    global _POKE_COUNT
+    _POKE_COUNT += 1
+    return {
+        "status": "alive",
+        "service": "kronos-inference",
+        "poke_count": _POKE_COUNT,
+        "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
+        "server_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
     }
 
 
@@ -147,6 +179,46 @@ def get_tradingview_draw_payload(request: StockPredictionRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to format TradingView drawing payload for {request.symbol}: {str(exc)}",
         )
+
+
+@app.post("/backtest", response_model=BacktestResult)
+def backtest_single_stock(request: BacktestRequest):
+    try:
+        return execute_backtest(request)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Backtest failed for {request.symbol}: {str(exc)}",
+        )
+
+
+@app.post("/backtest/batch", response_model=BatchBacktestResponse)
+def backtest_batch_stocks(request: BatchBacktestRequest):
+    start_time = time.time()
+    results = []
+    errors: Dict[str, str] = {}
+
+    for item in request.items:
+        try:
+            res = execute_backtest(item)
+            results.append(res)
+        except Exception as exc:
+            errors[item.symbol] = str(exc)
+
+    elapsed = round(time.time() - start_time, 3)
+
+    return BatchBacktestResponse(
+        success=len(results) > 0,
+        processed_count=len(results),
+        elapsed_seconds=elapsed,
+        results=results,
+        errors=errors if errors else None,
+    )
 
 
 if __name__ == "__main__":
