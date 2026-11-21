@@ -38,6 +38,13 @@ try:
         execute_backtest,
         _IS_REAL_MODEL_LOADED,
     )
+    from kronos.chart_patterns import (
+        ChartPatternEngine,
+        ChartPatternRequest,
+        ChartPatternResponse,
+        BatchChartPatternRequest,
+        BatchChartPatternResponse,
+    )
 except ImportError:
     from config import (
         HOST,
@@ -64,6 +71,15 @@ except ImportError:
         execute_backtest,
         _IS_REAL_MODEL_LOADED,
     )
+    from chart_patterns import (
+        ChartPatternEngine,
+        ChartPatternRequest,
+        ChartPatternResponse,
+        BatchChartPatternRequest,
+        BatchChartPatternResponse,
+    )
+
+pattern_engine = ChartPatternEngine()
 
 app = FastAPI(
     title="Kronos Financial Foundation Model API",
@@ -213,6 +229,45 @@ def backtest_batch_stocks(request: BatchBacktestRequest):
     elapsed = round(time.time() - start_time, 3)
 
     return BatchBacktestResponse(
+        success=len(results) > 0,
+        processed_count=len(results),
+        elapsed_seconds=elapsed,
+        results=results,
+        errors=errors if errors else None,
+    )
+
+
+@app.post("/patterns/detect", response_model=ChartPatternResponse)
+def detect_chart_patterns(request: ChartPatternRequest):
+    try:
+        return pattern_engine.analyze(request)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chart pattern detection failed for {request.symbol}: {str(exc)}",
+        )
+
+
+@app.post("/patterns/detect/batch", response_model=BatchChartPatternResponse)
+def detect_chart_patterns_batch(request: BatchChartPatternRequest):
+    start_time = time.time()
+    results = []
+    errors: Dict[str, str] = {}
+
+    for item in request.items:
+        try:
+            results.append(pattern_engine.analyze(item))
+        except Exception as exc:
+            errors[item.symbol] = str(exc)
+
+    elapsed = round(time.time() - start_time, 3)
+
+    return BatchChartPatternResponse(
         success=len(results) > 0,
         processed_count=len(results),
         elapsed_seconds=elapsed,
