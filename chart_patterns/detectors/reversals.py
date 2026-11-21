@@ -98,10 +98,20 @@ class ReversalPatternDetector(BasePatternDetector):
             upper_lvl = neck_at_end if inverse else None
             lower_lvl = None if inverse else neck_at_end
 
+            # Strict invalidation: if price after RS breached RS/Head, pattern is invalidated
+            post_rs = df.iloc[p3.index + 1 :]
+            if not post_rs.empty:
+                if not inverse and float(post_rs["close"].max()) > p3.value + atr * 0.4:
+                    continue
+                if inverse and float(post_rs["close"].min()) < p3.value - atr * 0.4:
+                    continue
+
             status, b_dir, b_lvl, vol_ok, vol_ratio = evaluate_breakout_and_status(
                 df, p3.index, upper_lvl, lower_lvl, bias, atr
             )
             if status == "invalidated":
+                continue
+            if status == "forming" and (n - 1 - p3.index) > 35:
                 continue
 
             target = round(neck_at_end + pattern_height, 2) if inverse else round(neck_at_end - pattern_height, 2)
@@ -200,10 +210,19 @@ class ReversalPatternDetector(BasePatternDetector):
                     continue
 
                 bias = "bearish" if is_top else "bullish"
+                post_p3 = df.iloc[p3.index + 1 :]
+                if not post_p3.empty:
+                    if is_top and float(post_p3["close"].max()) > max(vals) + atr * 0.4:
+                        continue
+                    if not is_top and float(post_p3["close"].min()) < min(vals) - atr * 0.4:
+                        continue
+
                 status, b_dir, b_lvl, vol_ok, vol_ratio = evaluate_breakout_and_status(
                     df, p3.index, None if is_top else neck_val, neck_val if is_top else None, bias, atr
                 )
                 if status == "invalidated":
+                    continue
+                if status == "forming" and (n - 1 - p3.index) > 35:
                     continue
 
                 used_triples.update([(p1.index, p2.index), (p2.index, p3.index)])
@@ -286,10 +305,19 @@ class ReversalPatternDetector(BasePatternDetector):
                 continue
 
             bias = "bearish" if is_top else "bullish"
+            post_p2 = df.iloc[p2.index + 1 :]
+            if not post_p2.empty:
+                if is_top and float(post_p2["close"].max()) > max(p1.value, p2.value) + atr * 0.4:
+                    continue
+                if not is_top and float(post_p2["close"].min()) < min(p1.value, p2.value) - atr * 0.4:
+                    continue
+
             status, b_dir, b_lvl, vol_ok, vol_ratio = evaluate_breakout_and_status(
                 df, p2.index, None if is_top else mid.value, mid.value if is_top else None, bias, atr
             )
             if status == "invalidated":
+                continue
+            if status == "forming" and (n - 1 - p2.index) > 35:
                 continue
 
             target = round(mid.value - height, 2) if is_top else round(mid.value + height, 2)
