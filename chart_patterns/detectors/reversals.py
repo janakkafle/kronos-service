@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 from ..schemas import ChartPoint, DetectedPattern, PatternBoundaries, PivotPoint
-from .base import BasePatternDetector, compute_confidence, evaluate_breakout_and_status
+from .base import BasePatternDetector, compute_confidence, evaluate_breakout_and_status, has_prior_trend
 
 
 class ReversalPatternDetector(BasePatternDetector):
@@ -111,7 +111,9 @@ class ReversalPatternDetector(BasePatternDetector):
             )
             if status == "invalidated":
                 continue
-            if status == "forming" and (n - 1 - p3.index) > 35:
+            if (n - 1 - p3.index) > 28:
+                continue
+            if not has_prior_trend(df, p1.index, "down" if inverse else "up", atr):
                 continue
 
             target = round(neck_at_end + pattern_height, 2) if inverse else round(neck_at_end - pattern_height, 2)
@@ -222,7 +224,9 @@ class ReversalPatternDetector(BasePatternDetector):
                 )
                 if status == "invalidated":
                     continue
-                if status == "forming" and (n - 1 - p3.index) > 35:
+                if (n - 1 - p3.index) > 28:
+                    continue
+                if not has_prior_trend(df, p1.index, "up" if is_top else "down", atr):
                     continue
 
                 used_triples.update([(p1.index, p2.index), (p2.index, p3.index)])
@@ -317,7 +321,9 @@ class ReversalPatternDetector(BasePatternDetector):
             )
             if status == "invalidated":
                 continue
-            if status == "forming" and (n - 1 - p2.index) > 35:
+            if (n - 1 - p2.index) > 28:
+                continue
+            if not has_prior_trend(df, p1.index, "up" if is_top else "down", atr):
                 continue
 
             target = round(mid.value - height, 2) if is_top else round(mid.value + height, 2)

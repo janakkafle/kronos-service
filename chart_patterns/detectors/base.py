@@ -56,6 +56,27 @@ def check_volume_contraction(df: pd.DataFrame, start_idx: int, end_idx: int) -> 
     return v1 > 0 and v2 < v1 * 0.95
 
 
+def has_prior_trend(
+    df: pd.DataFrame,
+    start_idx: int,
+    direction: Literal["up", "down"],
+    atr: float,
+) -> bool:
+    """
+    Verify a genuine prior trend precedes a reversal pattern (e.g., an uptrend before
+    a Double Top / H&S, or a downtrend before a Double Bottom / Inverse H&S).
+    """
+    if start_idx < 5:
+        return True  # Not enough pre-pattern bars in window to penalize
+    look_start = max(0, start_idx - 25)
+    pre = df.iloc[look_start : start_idx + 1]
+    if len(pre) < 4:
+        return True
+    if direction == "up":
+        return (float(df["high"].iloc[start_idx]) - float(pre["low"].min())) >= atr * 1.3
+    return (float(pre["high"].max()) - float(df["low"].iloc[start_idx])) >= atr * 1.3
+
+
 def evaluate_breakout_and_status(
     df: pd.DataFrame,
     end_idx: int,
@@ -63,12 +84,15 @@ def evaluate_breakout_and_status(
     lower_level: Optional[float],
     expected_bias: Literal["bullish", "bearish", "neutral"],
     atr: float,
+    max_breakout_age: int = 18,
 ) -> Tuple[Literal["forming", "confirmed", "invalidated"], Literal["bullish", "bearish", "none"], Optional[float], bool, float]:
     """
     Evaluate formation status ('forming', 'confirmed', 'invalidated'), breakout direction,
     active breakout level, and volume confirmation strictly using bars at/after `end_idx`
     up to the latest bar in `df` (zero look-ahead bias).
+    Stale breakouts older than `max_breakout_age` bars are filtered out as invalidated.
     """
+    n = len(df)
     last_close = float(df["close"].iloc[-1])
     last_vol_ratio = float(df["vol_ratio"].iloc[-1])
     buf = max(atr * 0.25, last_close * 0.002)
@@ -81,6 +105,9 @@ def evaluate_breakout_and_status(
         if upper_level is not None:
             broke_up = post_df[post_df["close"] > upper_level + buf]
             if not broke_up.empty:
+                b_idx = int(broke_up.index[0])
+                if (n - 1 - b_idx) > max_breakout_age:
+                    return "invalidated", "bullish", round(upper_level, 2), False, round(last_vol_ratio, 2)
                 b_vol = float(broke_up["vol_ratio"].iloc[0])
                 if lower_level is not None and last_close < lower_level - buf:
                     return "invalidated", "bearish", round(upper_level, 2), False, round(b_vol, 2)
@@ -93,6 +120,9 @@ def evaluate_breakout_and_status(
         if lower_level is not None:
             broke_down = post_df[post_df["close"] < lower_level - buf]
             if not broke_down.empty:
+                b_idx = int(broke_down.index[0])
+                if (n - 1 - b_idx) > max_breakout_age:
+                    return "invalidated", "bearish", round(lower_level, 2), False, round(last_vol_ratio, 2)
                 b_vol = float(broke_down["vol_ratio"].iloc[0])
                 if upper_level is not None and last_close > upper_level + buf:
                     return "invalidated", "bullish", round(lower_level, 2), False, round(b_vol, 2)
@@ -104,11 +134,17 @@ def evaluate_breakout_and_status(
     if upper_level is not None:
         broke_up = post_df[post_df["close"] > upper_level + buf]
         if not broke_up.empty:
+            b_idx = int(broke_up.index[0])
+            if (n - 1 - b_idx) > max_breakout_age:
+                return "invalidated", "bullish", round(upper_level, 2), False, round(last_vol_ratio, 2)
             b_vol = float(broke_up["vol_ratio"].iloc[0])
             return "confirmed", "bullish", round(upper_level, 2), b_vol >= 1.30, round(b_vol, 2)
     if lower_level is not None:
         broke_down = post_df[post_df["close"] < lower_level - buf]
         if not broke_down.empty:
+            b_idx = int(broke_down.index[0])
+            if (n - 1 - b_idx) > max_breakout_age:
+                return "invalidated", "bearish", round(lower_level, 2), False, round(last_vol_ratio, 2)
             b_vol = float(broke_down["vol_ratio"].iloc[0])
             return "confirmed", "bearish", round(lower_level, 2), b_vol >= 1.20, round(b_vol, 2)
 
